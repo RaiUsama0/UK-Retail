@@ -1,0 +1,43 @@
+# --- Secrets / environment ---
+.env
+*.env.local
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.ruff_cache/
+.pytest_cache/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- Data (raw source + derived outputs are reproducible via the pipeline, not committed) ---
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+Online Retail.xlsx
+
+# --- Reports / logs ---
+reports/*
+!reports/.gitkeep
+*.log
+
+# --- Database ---
+*.sqlite3
+pgdata/
+
+# --- Power BI (binary, machine-specific cache) ---
+dashboards/powerbi/*.pbix.bak
+
+# --- OS / IDE ---
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json

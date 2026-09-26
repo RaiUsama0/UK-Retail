@@ -1,0 +1,45 @@
+[project]
+name = "ecommerce-analytics"
+version = "0.1.0"
+description = "UK E-commerce Sales & Customer Intelligence Platform — end-to-end analytics pipeline built on the UCI Online Retail dataset."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Rai Usama" }]
+
+dependencies = [
+    "pandas>=2.2",
+    "openpyxl>=3.1",
+    "SQLAlchemy>=2.0",
+    "psycopg[binary]>=3.1",
+    "pandera>=0.20",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+dashboard = [
+    "streamlit>=1.35",
+    "plotly>=5.22",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
