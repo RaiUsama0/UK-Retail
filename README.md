@@ -5,7 +5,7 @@ schema, SQL business analysis, and dashboards — built on the UCI **Online Reta
 dataset, a historical (non-live) export of transactions from a UK-based online gift
 retailer covering 2010-12-01 to 2011-12-09.
 
-> **Status:** Phase 1 (planning & repository scaffold) complete. See
+> **Status:** Phase 2 (data ingestion & exploration) complete. See
 > [docs/architecture/overview.md](docs/architecture/overview.md) for the full plan and
 > current phase-by-phase progress.
 
@@ -66,8 +66,50 @@ the `Makefile` and below.
 
 ## Running the pipeline
 
-> Ingestion, cleaning, and database-loading commands will be documented here as each
-> phase is implemented (Phase 2 onward). Not yet available.
+### Ingestion and profiling (Phase 2)
+
+```bash
+ingest-data              # or: python -m ecommerce_analytics.cli
+ingest-data --force      # overwrite an existing raw copy whose checksum has drifted
+```
+
+What this does:
+
+1. Validates the source `Online Retail.xlsx` has all required columns (fails fast on a
+   missing/corrupt file or a missing column).
+2. Copies it, byte-for-byte, into `data/raw/` and records a SHA-256 checksum sidecar
+   file (`data/raw/Online Retail.xlsx.sha256`). On every subsequent run, the checksum
+   is recomputed and compared — if it matches, no copy is made (the file is simply
+   re-verified in place); if the raw copy has drifted from the source, the run is
+   refused unless you pass `--force`, to stop an ingested raw file being silently
+   overwritten.
+3. Runs structural schema validation (column presence, dtypes, nullability) via
+   Pandera — a **fatal** error here means the file isn't the dataset we expect.
+4. Computes a full data profile and writes it to `reports/data_profile.json` (machine-
+   readable) and `reports/data_profile.md` (human-readable), and logs a set of
+   **non-fatal** data-quality warnings (see below) — a full execution log is written
+   to `reports/ingestion.log`.
+
+### Data quality findings from the real dataset (Phase 2 output, reproducible via the
+command above — see `reports/data_profile.md` for the full report)
+
+| Finding | Count | % of rows |
+|---|---|---|
+| Missing `CustomerID` | 135,080 | 24.93% |
+| Missing `Description` | 1,454 | 0.27% |
+| Fully duplicated rows | 5,268 | 0.97% |
+| Negative `Quantity` | 10,624 | 1.96% |
+| Non-positive `UnitPrice` (2 negative + 2,515 zero) | 2,517 | 0.46% |
+| Cancellations (`InvoiceNo` starts with `C`) | 9,288 | 1.71% |
+| Potential returns (negative quantity, not a cancellation-prefixed invoice) | 1,336 | 0.25% |
+
+None of these rows are removed or modified in Phase 2 — they are flagged for Phase 3
+(`cleaning.py`), which will classify every row as `sale` / `cancellation` / `return` /
+`questionable` per `docs/kpi_definitions.md`.
+
+### Database loading and beyond
+
+> Not yet available — Phase 4 onward.
 
 ## Running the tests
 

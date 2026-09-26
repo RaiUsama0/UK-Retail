@@ -12,4 +12,5 @@ def test_pipeline_config_paths_are_absolute():
     cfg = load_pipeline_config()
     assert cfg.raw_data_dir.is_absolute()
     assert cfg.processed_data_dir.is_absolute()
+    assert cfg.reports_dir.is_absolute()
     assert cfg.source_xlsx_path.name == "Online Retail.xlsx"

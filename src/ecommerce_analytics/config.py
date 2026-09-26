@@ -35,6 +35,7 @@ class PipelineConfig:
     raw_data_dir: Path
     processed_data_dir: Path
     source_xlsx_path: Path
+    reports_dir: Path
 
 
 def _get_env(name: str, default: str | None = None) -> str:
@@ -62,4 +63,5 @@ def load_pipeline_config() -> PipelineConfig:
         raw_data_dir=REPO_ROOT / _get_env("RAW_DATA_DIR", "data/raw"),
         processed_data_dir=REPO_ROOT / _get_env("PROCESSED_DATA_DIR", "data/processed"),
         source_xlsx_path=REPO_ROOT / _get_env("SOURCE_XLSX_PATH", "Online Retail.xlsx"),
+        reports_dir=REPO_ROOT / _get_env("REPORTS_DIR", "reports"),
     )

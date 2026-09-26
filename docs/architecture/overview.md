@@ -21,12 +21,20 @@ dashboards state this explicitly rather than implying real-time or enriched data
 Online Retail.xlsx (pinned source, gitignored)
         │
         ▼
-ingestion.py      -> data/raw/ (frozen copy, immutable) + profiling report + logs
+ingestion.py      -> data/raw/ (checksum-verified immutable copy) + logs
         │
         ▼
-cleaning.py +
-validation.py     -> classifies every row as sale / cancellation / return / questionable
-                     (Pandera schemas enforce types and value rules)
+profiling.py      -> reports/data_profile.{json,md} — every statistic computed from
+                     the actual data, no rows removed or modified
+        │
+        ▼
+validation.py     -> schema validation (Pandera; fatal on structural failure) +
+                     business-rule warnings (non-fatal: negative qty, cancellations,
+                     missing CustomerID, etc. — real business events, not defects)
+        │
+        ▼
+cleaning.py       -> (Phase 3) classifies every row as sale / cancellation / return /
+                     questionable, acting on the warnings raised above
         │
         ▼
 data/processed/   -> validated, typed dataset + cleaning report (before/after counts)
