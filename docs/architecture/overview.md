@@ -224,22 +224,52 @@ rows each) — and correctly *ignored* in favour of a sequential scan when the f
 matches ~98% of rows (`valid_sale`), since scanning the whole table is cheaper than a
 huge index lookup. This is the query planner behaving correctly, not a missing index.
 
+## Analytical layer (Phase 5 — implemented)
+
+Full KPI definitions: `docs/kpi_definitions.md`. Real findings: `docs/business_insights.md`.
+SQL: `sql/schema/007_phase5_views.sql` (10 new views) + `sql/analysis/*.sql` (33
+illustrative, standalone queries across sales/product/customer/quality analysis,
+organised by business area).
+
+**Analytical convention**: every view reads from the complete `fact_sales` table (or
+`v_valid_sales`), never a pre-filtered copy. `v_valid_sales_deduplicated` exists only
+for explicitly-labelled sensitivity analysis (`v_duplicate_sensitivity[_delta]`) — it
+is never the default source for a headline KPI.
+
+**A performance issue found and fixed by measurement, not assumption**:
+`v_duplicate_sensitivity_delta`'s first draft used four correlated scalar subqueries,
+each independently re-evaluating `v_valid_sales_deduplicated`'s window-function
+deduplication pass over 530k+ rows. `EXPLAIN ANALYZE` measured this at **3,438 ms**.
+Rewriting it as a single scan with conditional (`FILTER`) aggregation — computing the
+underlying view exactly once instead of four times — measured at **890 ms**, a 3.9x
+improvement, with identical output. No new index or materialised view was introduced;
+the fix was the query itself. All other new views run in 270-965 ms against the full
+541,909-row table — acceptable for a BI dashboard refresh, not optimised further
+without a demonstrated need.
+
+**Reconciliation**: `tests/test_analysis.py` (12 tests) loads a small hand-computed
+synthetic dataset through the real Phase 3/4 pipeline and asserts the SQL views
+produce exactly the expected monthly totals, product revenue, RFM scores, cohort
+counts, and duplicate-sensitivity deltas — run against a real, live PostgreSQL
+instance, not mocked.
+
 ## Testing strategy
 
 - Unit tests for ingestion, cleaning, validation, profiling, and the warehouse loader's
   pure-Python helpers, using small synthetic fixtures with known, hand-computed
-  expected outputs (implemented Phases 2-4; 54 tests as of Phase 4 — `pytest`).
+  expected outputs (implemented Phases 2-5; 66 tests as of Phase 5 — `pytest`).
 - Data quality tests: required fields, types, valid quantity/price rules, date parsing,
   transaction classification, decimal-safe revenue, and reconciliation between raw and
   cleaned row counts — enforced as fatal regression guards in `validation.py`.
-- **Database integration tests** (`tests/test_warehouse_integration.py`, 12 tests):
-  schema creation, idempotent DDL, row-count/duplicate/status/monetary-precision
-  preservation, nullable customer FK, idempotent reload, transactional rollback on
-  failure, and reconciliation (including a test that deliberately corrupts a loaded
-  row and confirms reconciliation detects it). Run against a dedicated
-  `<database>_test` database, auto-created on first run — never the real
-  development database. Automatically **skipped** (not failed) if PostgreSQL isn't
-  reachable, so the credential-free CI workflow stays functional either way.
+- **Database integration tests** (`tests/test_warehouse_integration.py`, 12 tests;
+  `tests/test_analysis.py`, 12 tests): schema creation, idempotent DDL, row-count/
+  duplicate/status/monetary-precision preservation, nullable customer FK, idempotent
+  reload, transactional rollback on failure, warehouse reconciliation, and — for the
+  analytical layer — monthly-total, product-revenue, RFM-score, cohort-count, and
+  duplicate-sensitivity reconciliation against hand-computed expected values. Run
+  against a dedicated `<database>_test` database, auto-created on first run — never
+  the real development database. Automatically **skipped** (not failed) if PostgreSQL
+  isn't reachable, so the credential-free CI workflow stays functional either way.
 - CI (`.github/workflows/ci.yml`) runs lint (`ruff`) and `pytest` on every push/PR,
   with a PostgreSQL 16 service container so the database integration tests run for
   real in CI too, not just locally.
@@ -250,6 +280,78 @@ huge index lookup. This is the query planner behaving correctly, not a missing i
   Performance, Customer Intelligence pages), connected directly to PostgreSQL.
 - **Streamlit** — an optional public demo, reading the same validated data, with no
   database credentials or personal customer identifiers exposed.
+
+## Power BI implementation specification (Phase 6 — not yet built)
+
+**No PBIX file or dashboard exists yet.** This is a specification for Phase 6, written
+against the actual views that now exist, not a description of finished work.
+
+### Dashboard pages and their datasets
+
+| Page | Primary view(s) | Grain |
+|---|---|---|
+| Executive Overview | `v_monthly_revenue_growth`, headline totals (`sql/analysis/010`) | One row per month |
+| Monthly Sales Trends | `v_monthly_revenue_growth` | One row per month |
+| Product Performance | `v_product_performance`, `v_product_monthly_trend`, `v_product_cancellation_activity` | One row per product (+ per product-month for the trend) |
+| Country Performance | `v_revenue_by_country`, `v_product_country_rankings` | One row per country (+ per country-product) |
+| Customer Analysis | `v_customer_rfm`, `v_customer_summary` (Phase 4) | One row per identified customer |
+| RFM Segmentation | `v_customer_rfm` | One row per identified customer with >=1 valid_sale |
+| Cohort Retention | `v_customer_cohort_retention` | One row per (cohort_month, activity_month) pair |
+| Transaction Quality | `v_data_quality_monitor` (Phase 4), `v_duplicate_sensitivity[_delta]` | One row per transaction_status |
+
+### Data relationships (Power BI model view)
+
+Import `warehouse.dim_date`, `dim_product`, `dim_customer`, `dim_country`, and
+`fact_sales` directly (star schema, exactly as modelled in PostgreSQL — see the ER
+diagram above) for interactive cross-filtering; import the Phase 5 views as
+independent, pre-aggregated tables (they don't need further relationships to the star
+schema — each is already a finished analytical grain). Mark `dim_date` as Power BI's
+official Date table.
+
+### KPI definitions
+
+Reuse `docs/kpi_definitions.md` verbatim as the measure specification — every DAX
+measure below is a direct translation of an already-implemented, already-verified SQL
+definition, not a new one invented for Power BI.
+
+### Recommended visualisations
+
+- Executive Overview: KPI cards (net revenue, orders, AOV, active customers), a line
+  chart of `v_monthly_revenue_growth` with `is_partial_month` visually distinguished
+  (e.g. a dashed/greyed final point), a country map or bar chart.
+- Product Performance: a table of `v_product_performance` with conditional formatting
+  on `pct_of_total_revenue`; a note/tooltip flagging non-product stock codes.
+- RFM Segmentation: a scatter plot (Recency x Frequency, sized by Monetary, coloured
+  by `rfm_segment_heuristic`) — labelled as a heuristic in the page title, not "Customer
+  Segments" unqualified.
+- Cohort Retention: a heatmap (`cohort_month` x `month_index`, coloured by
+  `retention_pct`), with `dataset_last_month` used to grey out cells with insufficient
+  observation window rather than showing them as low retention.
+
+### Required DAX measures (translating already-implemented SQL, not new logic)
+
+```
+Net Revenue = SUM(fact_sales[line_revenue])  -- filtered by transaction_status in ('valid_sale','cancellation')
+Gross Sales Revenue = CALCULATE(SUM(fact_sales[line_revenue]), fact_sales[transaction_status] = "valid_sale")
+Order Count = CALCULATE(DISTINCTCOUNT(fact_sales[invoice_no]), fact_sales[transaction_status] = "valid_sale")
+Average Order Value = DIVIDE([Net Revenue], [Order Count])
+MoM Growth % = DIVIDE([Net Revenue] - [Net Revenue (PM)], [Net Revenue (PM)])
+```
+
+### Filters and slicers
+
+`dim_date` (month/quarter/year), `dim_country`, `transaction_status`, and an explicit
+`is_partial_month` slicer/warning banner on any time-series page — Phase 5 found a
+genuine -70% MoM figure driven entirely by a truncated month; the dashboard must not
+let a viewer misread that the same way.
+
+### Data refresh considerations
+
+Source data is a static historical export — there is no live refresh source. A
+Power BI refresh re-runs the same warehouse queries against whatever is currently
+loaded in PostgreSQL (i.e., refreshing re-reads the same historical data, it does not
+fetch new transactions). Document this explicitly on the dashboard itself so it is
+never mistaken for a live operational dashboard.
 
 ## Deliverables and acceptance criteria
 

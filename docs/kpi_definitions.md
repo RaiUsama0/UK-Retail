@@ -3,13 +3,12 @@
 Every metric below states its exact formula, denominator, and how cancellations/returns
 are treated, so results are reproducible and defensible in an interview.
 
-> **Status:** the transaction classification and revenue figures below are **implemented**
-> (Phase 3, `src/ecommerce_analytics/cleaning.py`) and verified against the real dataset —
-> see `reports/cleaning_summary.md` for the live output. A first SQL-native
-> implementation of the order/customer/product/monthly-revenue KPIs below now exists as
-> PostgreSQL views (Phase 4, `sql/schema/006_views.sql` —
-> `v_customer_summary`, `v_product_summary`, `v_monthly_revenue`); the full ad-hoc SQL
-> analysis (window functions, CTEs, growth calculations) is still Phase 5's job.
+> **Status:** every definition below is **implemented and verified** against the real
+> dataset. Phase 3 (`cleaning.py`) computes `transaction_status` and `line_revenue`;
+> Phase 4 loads them into PostgreSQL; Phase 5 (`sql/schema/007_phase5_views.sql`,
+> `sql/analysis/`) implements monthly growth, RFM, cohort retention, and duplicate
+> sensitivity as SQL views, reconciled against independent Python calculations in
+> `tests/test_analysis.py`. Real results: `docs/business_insights.md`.
 
 ## Transaction classification (feeds every KPI below)
 
@@ -105,16 +104,59 @@ same session). Each downstream query decides deliberately using the flag.
   `cancellation` rows).
 - Reported both by row count and by revenue value offset (see Revenue above).
 
-## Monthly revenue growth
+## Monthly revenue growth (implemented — `warehouse.v_monthly_revenue_growth`)
 
 - Revenue grouped by `DATE_TRUNC('month', invoice_date)`, using Net revenue.
 - Month-over-month growth % = `(this_month - prev_month) / prev_month`, computed with
-  a window function (`LAG`) in SQL — see `sql/analysis/` (Phase 5).
+  `LAG()`. `NULL` for the first month (no previous period) and whenever the previous
+  month's net revenue is exactly 0 (avoids a division-by-zero).
+- Cumulative revenue = a running `SUM() OVER (ORDER BY year, month ROWS BETWEEN
+  UNBOUNDED PRECEDING AND CURRENT ROW)`.
+- **`is_partial_month`**: `TRUE` only if the month is the dataset's very first or very
+  last calendar month **and** the dataset's actual min/max date doesn't reach that
+  month's calendar boundary — verified against the real data, not assumed. The
+  dataset's first month (2010-12) starts exactly on the 1st and is correctly **not**
+  flagged, even though its own last recorded sale is the 23rd (a business/holiday gap,
+  not a truncated observation window); the last month (2011-12) **is** flagged (last
+  recorded sale: the 9th).
 
-## RFM (customer segmentation)
+## RFM (customer segmentation, implemented — `warehouse.v_customer_rfm`)
 
-- **Recency** = days between the dataset's max `invoice_date` and a customer's last
-  `valid_sale` invoice date.
+- **Recency** = days between a reference date and a customer's last `valid_sale`
+  invoice date. Reference date = `MAX(invoice_timestamp) + 1 day` **across the whole
+  dataset** — derived from the data, not wall-clock "today", so results are
+  reproducible regardless of when the query runs.
 - **Frequency** = count of distinct `valid_sale` invoices per customer.
-- **Monetary** = Net revenue attributable to that customer.
-- Computed only for customers with a known `customer_id`.
+- **Monetary** = that customer's `valid_sale` revenue, netted against their **own**
+  `cancellation` revenue (both attributed via `customer_key`). 383 of 9,288
+  cancellation rows (4.1%) have no `customer_id` and so cannot be netted at the
+  customer level — they are still counted in organisation-wide net revenue.
+- Computed only for customers with a known `customer_id` **and** at least one
+  `valid_sale` purchase (34 of 4,372 identified customers have none — e.g. a customer
+  whose only recorded activity is a cancellation — and are excluded).
+- **Scores**: `NTILE(4)` quartiles per dimension (4 = best: most recent, most
+  frequent, highest spend). `rfm_segment_heuristic` is a simple score-threshold
+  labelling (e.g. `Champions` = top quartile on all three) — **a heuristic, not a
+  validated behavioural segmentation**. Treat it as a starting point for investigation.
+
+## Cohort retention (implemented — `warehouse.v_customer_cohort_retention`)
+
+- **Cohort month** = the calendar month of a customer's first `valid_sale` invoice.
+- **Activity month** = any calendar month in which that customer has a `valid_sale`
+  invoice (including the cohort month itself, `month_index = 0`, trivially 100%).
+- **Cohort size** = `COUNT(DISTINCT customer_key)` in that cohort.
+- **Retention %** = `COUNT(DISTINCT customer_key)` active in a given activity month /
+  cohort size — distinct customers throughout, so multiple orders from one customer in
+  one month never inflate the retained count.
+- **Observation-window limitation**: the dataset ends 2011-12-09. A cohort formed near
+  that date has had little or no chance to show retention in later months simply
+  because those months aren't in the data — `dataset_last_month` is exposed on the view
+  so this is never mistaken for confirmed churn.
+
+## Duplicate sensitivity (implemented — `warehouse.v_duplicate_sensitivity[_delta]`)
+
+Compares headline KPIs (revenue, order count, units sold, AOV) computed from the
+complete dataset vs. `v_valid_sales_deduplicated` (see that view's own comment in
+`sql/schema/006_views.sql` for its exact selection rule and limitations). Verified on
+the real dataset: revenue -0.24%, units -0.29%, AOV -0.24%, order count unchanged —
+neither figure is asserted as "the true" one; see `docs/business_insights.md`.

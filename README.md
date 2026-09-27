@@ -5,7 +5,7 @@ schema, SQL business analysis, and dashboards — built on the UCI **Online Reta
 dataset, a historical (non-live) export of transactions from a UK-based online gift
 retailer covering 2010-12-01 to 2011-12-09.
 
-> **Status:** Phase 4 (PostgreSQL data modelling & warehouse loading) complete. See
+> **Status:** Phase 5 (advanced SQL analysis & business intelligence) complete. See
 > [docs/architecture/overview.md](docs/architecture/overview.md) for the full plan and
 > current phase-by-phase progress.
 
@@ -217,6 +217,55 @@ ORDER BY total_net_revenue DESC LIMIT 10;
 SELECT * FROM warehouse.v_data_quality_monitor;
 ```
 
+### Advanced SQL analysis and business intelligence (Phase 5)
+
+No new command — this phase adds SQL, not a pipeline step. The database must already
+be loaded (`ingest-data load-warehouse` above); the 10 new views are applied
+automatically as part of that command (it re-applies the whole `sql/schema/`
+directory every run). To run an illustrative analysis script directly, use `psql` if
+you have it installed, or the project's own `psycopg` dependency:
+
+```bash
+# With psql:
+psql -h localhost -p 5433 -U analytics_user -d ecommerce_analytics -f sql/analysis/010_sales_performance.sql
+
+# Without psql (uses the same connection config as the rest of the project):
+python -c "
+from ecommerce_analytics.warehouse import build_engine
+import sqlalchemy as sa
+engine = build_engine()
+sql = open('sql/analysis/010_sales_performance.sql').read()
+with engine.connect() as conn:
+    for stmt in [s for s in sql.split(';') if s.strip() and not s.strip().startswith('--')]:
+        for row in conn.execute(sa.text(stmt)):
+            print(row)
+"
+```
+
+10 new views (`sql/schema/007_phase5_views.sql`) covering monthly revenue growth
+(with a genuinely-derived partial-month flag), revenue by country, product
+rankings/trends/cancellation activity, RFM customer segmentation, cohort retention,
+and duplicate-sensitivity analysis — plus 33 illustrative standalone queries in
+`sql/analysis/*.sql`, organised by business area (sales, product, customer,
+transaction quality, cohorts).
+
+**Full real findings, with every number traced to its query**:
+[docs/business_insights.md](docs/business_insights.md). Highlights:
+
+| Finding | Value |
+|---|---|
+| Net revenue | £9,758,809.99 (19,959 orders, AOV £488.94) |
+| Repeat customer rate | 65.58% (2,845 of 4,338 customers with a qualifying purchase) |
+| Revenue concentration | Top 10% of customers = 59.80% of customer-attributable revenue |
+| Mean vs. median customer spend | £1,915.74 vs. £655.34 (heavily right-skewed) |
+| December 2011 | **Partial month** (9 of 31 days) — its -70.33% MoM figure is a truncation artefact, not a real trend |
+
+A genuine performance issue was found and fixed by measurement: an early version of
+`v_duplicate_sensitivity_delta` took 3.4s (it re-computed an expensive deduplication
+window function 4 times); rewritten as a single-pass query, it takes 0.89s with
+identical output — see `docs/architecture/overview.md` for the `EXPLAIN ANALYZE`
+evidence.
+
 ## Running the tests
 
 ```bash
@@ -224,10 +273,11 @@ pytest        # or: make test
 ruff check src tests   # or: make lint
 ```
 
-Database integration tests (`tests/test_warehouse_integration.py`) run against a
-dedicated `<database>_test` database (auto-created, never the real dev database) and
-are **skipped automatically** if PostgreSQL isn't reachable — `pytest` still passes
-either way. CI runs them for real, against a PostgreSQL 16 service container.
+Database integration tests (`tests/test_warehouse_integration.py`,
+`tests/test_analysis.py`) run against a dedicated `<database>_test` database
+(auto-created, never the real dev database) and are **skipped automatically** if
+PostgreSQL isn't reachable — `pytest` still passes either way. CI runs them for real,
+against a PostgreSQL 16 service container. 66 tests total as of Phase 5.
 
 ## Project limitations
 

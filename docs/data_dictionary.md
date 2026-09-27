@@ -66,6 +66,18 @@ Full ER diagram and design rationale: `docs/architecture/overview.md`. Loaded vi
 | `warehouse.dim_date` | One row per calendar day spanning the observed date range (374 rows) | PK `date_key` (INTEGER, `YYYYMMDD`) |
 | `staging.stg_cleaned_sales` | Transient landing table, truncated and bulk-loaded (`COPY`) every run | No constraints — not the source of truth |
 
+### Analytical views (Phase 5, `sql/schema/006_views.sql` + `007_phase5_views.sql`)
+
+19 views total: 9 from Phase 4 (per-status filters, customer/product summaries,
+monthly revenue, data quality monitor, plus the documented `v_valid_sales_deduplicated`)
+and 10 from Phase 5 — `v_monthly_revenue_growth`, `v_revenue_by_country`,
+`v_product_performance`, `v_product_country_rankings`, `v_product_monthly_trend`,
+`v_product_cancellation_activity`, `v_customer_rfm`, `v_customer_cohort_retention`,
+`v_duplicate_sensitivity`, `v_duplicate_sensitivity_delta`. Full
+definitions, grain, and business rationale for each: `docs/kpi_definitions.md` and the
+SQL files themselves (every view is commented in place). Real output:
+`docs/business_insights.md`.
+
 Verified, not assumed, going into this design:
 - **647 of 4,070 stock codes have more than one distinct non-null description**
   (often a genuine description plus an inventory annotation like `"damaged"` or
