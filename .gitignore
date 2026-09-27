@@ -33,8 +33,10 @@ reports/*
 *.sqlite3
 pgdata/
 
-# --- Power BI (binary, machine-specific cache) ---
+# --- Power BI (binary/generated, regenerable via `ingest-data export-powerbi`) ---
 dashboards/powerbi/*.pbix.bak
+dashboards/powerbi/data/*
+!dashboards/powerbi/data/.gitkeep
 
 # --- OS / IDE ---
 .DS_Store

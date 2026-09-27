@@ -27,8 +27,14 @@ from ecommerce_analytics.cleaning import (
     save_cleaned_dataset,
     save_cleaning_reports,
 )
-from ecommerce_analytics.config import load_pipeline_config
+from ecommerce_analytics.config import REPO_ROOT, load_pipeline_config
 from ecommerce_analytics.ingestion import IngestionError, ingest_raw_file, load_dataset
+from ecommerce_analytics.powerbi_export import (
+    ExportResult,
+    PowerBIExportError,
+    export_all,
+    verify_export,
+)
 from ecommerce_analytics.profiling import compute_profile, save_reports
 from ecommerce_analytics.validation import (
     CleaningValidationError,
@@ -83,6 +89,12 @@ class WarehouseLoadCliResult:
     reconciliation: ReconciliationResult
     json_report_path: Path
     markdown_report_path: Path
+
+
+@dataclass(frozen=True)
+class PowerBIExportCliResult:
+    exports: list[ExportResult]
+    all_verified: bool
 
 
 def configure_logging(log_file: Path | None = None, level: int = logging.INFO) -> None:
@@ -250,6 +262,35 @@ def run_warehouse_load_pipeline() -> WarehouseLoadCliResult:
     )
 
 
+def run_powerbi_export_pipeline() -> PowerBIExportCliResult:
+    """Export the minimal set of warehouse tables/views Power BI Import mode needs
+    (see dashboards/powerbi/DATA_MODEL.md) to CSV, then re-count each source live to
+    verify the export matches exactly.
+
+    Raises :class:`~ecommerce_analytics.warehouse.WarehouseError` on connection
+    failure, or :class:`~ecommerce_analytics.powerbi_export.PowerBIExportError` if a
+    source can't be read/written.
+    """
+    logger.info("Connecting to PostgreSQL")
+    engine = build_engine()
+
+    output_dir = REPO_ROOT / "dashboards" / "powerbi" / "data"
+    logger.info("Exporting Power BI import tables to %s", output_dir)
+    exports = export_all(engine, output_dir)
+
+    all_verified = True
+    for result in exports:
+        verified = verify_export(result, engine)
+        all_verified = all_verified and verified
+        logger.info(
+            "%s: %d rows exported, live count matches: %s", result.name, result.row_count, verified
+        )
+        if not verified:
+            logger.warning("%s: exported row count does not match the live source!", result.name)
+
+    return PowerBIExportCliResult(exports=exports, all_verified=all_verified)
+
+
 def _print_ingestion_summary(result: PipelineResult) -> None:
     warning_count = sum(1 for w in result.warnings if w.severity == "warning")
     info_count = sum(1 for w in result.warnings if w.severity == "info")
@@ -300,6 +341,15 @@ def _print_warehouse_load_summary(result: WarehouseLoadCliResult) -> None:
     print()
 
 
+def _print_powerbi_export_summary(result: PowerBIExportCliResult) -> None:
+    print()
+    print("=== Power BI export summary ===")
+    for export in result.exports:
+        print(f"  {export.name:<30} {export.row_count:>8,} rows  -> {export.path}")
+    print(f"All exports verified against live source: {result.all_verified}")
+    print()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="ingest-data",
@@ -309,7 +359,7 @@ def main(argv: list[str] | None = None) -> int:
         "command",
         nargs="?",
         default="ingest",
-        choices=["ingest", "clean", "load-warehouse"],
+        choices=["ingest", "clean", "load-warehouse", "export-powerbi"],
         help="Workflow to run (default: ingest).",
     )
     parser.add_argument(
@@ -326,6 +376,7 @@ def main(argv: list[str] | None = None) -> int:
         "ingest": "ingestion.log",
         "clean": "cleaning.log",
         "load-warehouse": "warehouse_load.log",
+        "export-powerbi": "powerbi_export.log",
     }
     log_file = load_pipeline_config().reports_dir / log_file_names[command]
     configure_logging(log_file=log_file)
@@ -341,6 +392,12 @@ def main(argv: list[str] | None = None) -> int:
             if not result.reconciliation.all_passed:
                 logger.error("Warehouse load completed but reconciliation found mismatches.")
                 return 1
+        elif command == "export-powerbi":
+            result = run_powerbi_export_pipeline()
+            _print_powerbi_export_summary(result)
+            if not result.all_verified:
+                logger.error("Power BI export completed but a row-count mismatch was found.")
+                return 1
         else:
             parser.error(f"Unknown command: {command}")
     except IngestionError as exc:
@@ -354,6 +411,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except WarehouseError as exc:
         logger.error("Warehouse load failed: %s", exc)
+        return 1
+    except PowerBIExportError as exc:
+        logger.error("Power BI export failed: %s", exc)
         return 1
 
     return 0

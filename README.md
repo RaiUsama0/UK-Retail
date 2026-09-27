@@ -5,7 +5,8 @@ schema, SQL business analysis, and dashboards — built on the UCI **Online Reta
 dataset, a historical (non-live) export of transactions from a UK-based online gift
 retailer covering 2010-12-01 to 2011-12-09.
 
-> **Status:** Phase 5 (advanced SQL analysis & business intelligence) complete. See
+> **Status:** Phase 6 (Power BI dashboard specification & verified data export)
+> complete — see the note below on why no `.pbix` file exists yet. See
 > [docs/architecture/overview.md](docs/architecture/overview.md) for the full plan and
 > current phase-by-phase progress.
 
@@ -38,6 +39,12 @@ Docker Compose, Power BI Desktop, Streamlit (optional demo), ruff, GitHub Action
 Every metric's exact formula and denominator is documented up front in
 [docs/kpi_definitions.md](docs/kpi_definitions.md), including how cancellations and
 returns are treated.
+
+## Case study
+
+A concise, portfolio-facing walkthrough (business problem, architecture, findings,
+limitations) is in [docs/portfolio_case_study.md](docs/portfolio_case_study.md). Full
+technical findings with every number traced to a query: `docs/business_insights.md`.
 
 ## Installation and setup
 
@@ -266,6 +273,28 @@ window function 4 times); rewritten as a single-pass query, it takes 0.89s with
 identical output — see `docs/architecture/overview.md` for the `EXPLAIN ANALYZE`
 evidence.
 
+### Power BI dashboard data export (Phase 6)
+
+```bash
+ingest-data export-powerbi   # or: python -m ecommerce_analytics.cli export-powerbi
+```
+
+Exports a deliberately minimal 9-table import model (the star schema plus 4 Phase 5
+views whose logic is too complex to sanely re-derive in DAX) to
+`dashboards/powerbi/data/*.csv`, then re-counts every source live in PostgreSQL to
+verify each export matches exactly.
+
+**No `.pbix`/`.pbip` file exists in this repository.** Power BI Desktop is installed
+on the build machine, but it's a GUI-only application with no command-line interface,
+and this environment has no screenshot/GUI-automation capability to drive it or
+verify what it renders. Rather than hand-author a binary/project file with no way to
+confirm it actually opens correctly, `dashboards/powerbi/` contains everything needed
+to build it by hand quickly and correctly: the full data model (`DATA_MODEL.md`,
+including which tables are deliberately left unrelated to prevent double-counting),
+every DAX measure with its SQL-verified expected value (`DAX_MEASURES.md`), a
+visual-by-visual spec for all 4 pages (`PAGE_SPECIFICATIONS.md`), and a user guide
+(`DASHBOARD_USER_GUIDE.md`) — plus the real, row-count-verified CSV data itself.
+
 ## Running the tests
 
 ```bash
@@ -274,10 +303,11 @@ ruff check src tests   # or: make lint
 ```
 
 Database integration tests (`tests/test_warehouse_integration.py`,
-`tests/test_analysis.py`) run against a dedicated `<database>_test` database
-(auto-created, never the real dev database) and are **skipped automatically** if
-PostgreSQL isn't reachable — `pytest` still passes either way. CI runs them for real,
-against a PostgreSQL 16 service container. 66 tests total as of Phase 5.
+`tests/test_analysis.py`, `tests/test_powerbi_export.py`) run against a dedicated
+`<database>_test` database (auto-created, never the real dev database) and are
+**skipped automatically** if PostgreSQL isn't reachable — `pytest` still passes either
+way. CI runs them for real, against a PostgreSQL 16 service container. 73 tests total
+as of Phase 6.
 
 ## Project limitations
 
