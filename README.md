@@ -5,8 +5,10 @@ schema, SQL business analysis, and dashboards — built on the UCI **Online Reta
 dataset, a historical (non-live) export of transactions from a UK-based online gift
 retailer covering 2010-12-01 to 2011-12-09.
 
-> **Status:** Phase 6 (Power BI dashboard specification & verified data export)
-> complete — see the note below on why no `.pbix` file exists yet. See
+> **Status:** Phase 7 (public Streamlit dashboard) complete and verified locally —
+> **not yet publicly deployed** (requires pushing to GitHub and Streamlit Community
+> Cloud authorisation, both outside what I can do on your behalf). Power BI's `.pbix`
+> also still doesn't exist — see the notes below on both. See
 > [docs/architecture/overview.md](docs/architecture/overview.md) for the full plan and
 > current phase-by-phase progress.
 
@@ -32,7 +34,8 @@ flow diagram, database design rationale, and testing strategy.
 ## Technology stack
 
 Python 3.11+, pandas, PostgreSQL, SQLAlchemy, psycopg, Pandera, pytest, Docker /
-Docker Compose, Power BI Desktop, Streamlit (optional demo), ruff, GitHub Actions.
+Docker Compose, Power BI Desktop, Streamlit + Plotly (public demo), ruff, GitHub
+Actions.
 
 ## KPI definitions
 
@@ -295,19 +298,52 @@ every DAX measure with its SQL-verified expected value (`DAX_MEASURES.md`), a
 visual-by-visual spec for all 4 pages (`PAGE_SPECIFICATIONS.md`), and a user guide
 (`DASHBOARD_USER_GUIDE.md`) — plus the real, row-count-verified CSV data itself.
 
+### Public Streamlit dashboard (Phase 7)
+
+```bash
+ingest-data export-public        # generates the privacy-reviewed public CSVs
+streamlit run dashboards/streamlit/app.py
+```
+
+A 4-page public demo (Executive Overview, Product Performance, Customer
+Intelligence, Transaction Quality) reading only from aggregated, privacy-reviewed CSV
+extracts — **no PostgreSQL connection is used or required to run this app**. Verified
+locally: `streamlit run` was started for real, served `HTTP 200`, and was stopped
+again (see `dashboards/streamlit/README.md`); every KPI on every page was checked via
+Streamlit's own headless `AppTest` facility against synthetic fixtures with
+hand-computed expected values (`tests/test_streamlit_app.py`, 13 tests), and
+separately, all 5 pages were confirmed to render the real exported data with zero
+exceptions and exactly the reconciled figures (net revenue £9,758,809.99, repeat rate
+65.58%, etc.).
+
+**Public dataset ≠ internal warehouse**: the public CSVs never contain a
+`customer_id`, `customer_key`, or any per-customer/per-transaction row — enforced by
+an automated check (`assert_no_customer_identifiers`), not just a manual review. Full
+per-file privacy rationale: `dashboards/streamlit/data/public/README.md`. Source
+licence verified directly against the UCI dataset page: **CC BY 4.0** (permits
+public/commercial use with attribution).
+
+**Not yet publicly deployed.** Deploying to Streamlit Community Cloud requires
+pushing this repo to GitHub and authorising a Streamlit Cloud account — both need
+you, not me. Full step-by-step instructions: `dashboards/streamlit/README.md`.
+
 ## Running the tests
 
 ```bash
 pytest        # or: make test
-ruff check src tests   # or: make lint
+ruff check src tests dashboards/streamlit   # or: make lint
 ```
 
 Database integration tests (`tests/test_warehouse_integration.py`,
-`tests/test_analysis.py`, `tests/test_powerbi_export.py`) run against a dedicated
-`<database>_test` database (auto-created, never the real dev database) and are
-**skipped automatically** if PostgreSQL isn't reachable — `pytest` still passes either
-way. CI runs them for real, against a PostgreSQL 16 service container. 73 tests total
-as of Phase 6.
+`tests/test_analysis.py`, `tests/test_powerbi_export.py`, `tests/test_public_export.py`)
+run against a dedicated `<database>_test` database (auto-created, never the real dev
+database) and are **skipped automatically** if PostgreSQL isn't reachable — `pytest`
+still passes either way. The Streamlit app's tests
+(`tests/test_streamlit_metrics.py`, `tests/test_streamlit_data_loader.py`,
+`tests/test_streamlit_app.py`) need neither Postgres nor Streamlit's `AppTest`
+network features — pure-function tests plus Streamlit's own headless testing
+facility against synthetic fixtures. CI runs the database tests for real, against a
+PostgreSQL 16 service container. **111 tests total as of Phase 7.**
 
 ## Project limitations
 
@@ -321,12 +357,17 @@ as of Phase 6.
   was recorded correctly at the source. `non_standard`, `potential_return`, and
   duplicate-candidate rows (about 2.4% of rows combined) are reported separately
   rather than folded into "clean" data; see `docs/data_dictionary.md`.
+- The public Streamlit app's data is a point-in-time snapshot committed/exported
+  separately from the live warehouse — refreshing it requires an explicit
+  `ingest-data export-public` step, not an automatic sync (by design: the deployed
+  app must not require a continuously running database).
 
 ## Future improvements
 
 - Airflow/orchestrated scheduling, if extended beyond a portfolio demo.
-- Cloud deployment (currently intentionally local-only: Docker Compose + Power
-  BI/Streamlit).
+- Actually deploying the Streamlit app to Streamlit Community Cloud (implemented and
+  locally verified; deployment itself needs your GitHub/hosting authorisation) and
+  building the Power BI report from the existing verified specification.
 
 ## Licence
 

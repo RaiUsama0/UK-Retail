@@ -4,7 +4,7 @@ setup:
 	pip install -e ".[dev,dashboard]"
 
 lint:
-	ruff check src tests
+	ruff check src tests dashboards/streamlit
 
 test:
 	pytest

@@ -1,0 +1,10 @@
+# Dependencies for the PUBLIC Streamlit app only (dashboards/streamlit/app.py).
+# Deliberately excludes sqlalchemy/psycopg/pandera/openpyxl — the deployed app never
+# connects to PostgreSQL or parses the raw Excel file; it only reads the committed
+# CSV extracts in dashboards/streamlit/data/public/. See dashboards/streamlit/README.md.
+#
+# Lower bounds match what was actually tested locally (streamlit 1.45.1, pandas
+# 2.3.0, plotly 6.7.0) — not assumed compatible with untested future major versions.
+streamlit>=1.45,<2
+pandas>=2.3,<3
+plotly>=6.7,<7

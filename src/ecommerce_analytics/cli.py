@@ -32,10 +32,24 @@ from ecommerce_analytics.ingestion import IngestionError, ingest_raw_file, load_
 from ecommerce_analytics.powerbi_export import (
     ExportResult,
     PowerBIExportError,
-    export_all,
-    verify_export,
+)
+from ecommerce_analytics.powerbi_export import (
+    export_all as export_all_powerbi,
+)
+from ecommerce_analytics.powerbi_export import (
+    verify_export as verify_powerbi_export,
 )
 from ecommerce_analytics.profiling import compute_profile, save_reports
+from ecommerce_analytics.public_export import (
+    PublicExportError,
+    PublicExportResult,
+)
+from ecommerce_analytics.public_export import (
+    assert_no_customer_identifiers as assert_public_export_has_no_customer_identifiers,
+)
+from ecommerce_analytics.public_export import (
+    export_all as export_all_public,
+)
 from ecommerce_analytics.validation import (
     CleaningValidationError,
     SchemaValidationError,
@@ -95,6 +109,12 @@ class WarehouseLoadCliResult:
 class PowerBIExportCliResult:
     exports: list[ExportResult]
     all_verified: bool
+
+
+@dataclass(frozen=True)
+class PublicExportCliResult:
+    exports: list[PublicExportResult]
+    privacy_check_passed: bool
 
 
 def configure_logging(log_file: Path | None = None, level: int = logging.INFO) -> None:
@@ -276,11 +296,11 @@ def run_powerbi_export_pipeline() -> PowerBIExportCliResult:
 
     output_dir = REPO_ROOT / "dashboards" / "powerbi" / "data"
     logger.info("Exporting Power BI import tables to %s", output_dir)
-    exports = export_all(engine, output_dir)
+    exports = export_all_powerbi(engine, output_dir)
 
     all_verified = True
     for result in exports:
-        verified = verify_export(result, engine)
+        verified = verify_powerbi_export(result, engine)
         all_verified = all_verified and verified
         logger.info(
             "%s: %d rows exported, live count matches: %s", result.name, result.row_count, verified
@@ -289,6 +309,28 @@ def run_powerbi_export_pipeline() -> PowerBIExportCliResult:
             logger.warning("%s: exported row count does not match the live source!", result.name)
 
     return PowerBIExportCliResult(exports=exports, all_verified=all_verified)
+
+
+def run_public_export_pipeline() -> PublicExportCliResult:
+    """Export the privacy-reviewed, fully-aggregated public dataset for the Streamlit
+    dashboard (see dashboards/streamlit/data/public/README.md), then run the
+    defence-in-depth check that no exported file contains a customer identifier.
+
+    Raises :class:`~ecommerce_analytics.warehouse.WarehouseError` on connection
+    failure, or :class:`~ecommerce_analytics.public_export.PublicExportError` if a
+    source can't be read/written or the privacy check fails.
+    """
+    logger.info("Connecting to PostgreSQL")
+    engine = build_engine()
+
+    output_dir = REPO_ROOT / "dashboards" / "streamlit" / "data" / "public"
+    logger.info("Exporting public dashboard datasets to %s", output_dir)
+    exports = export_all_public(engine, output_dir)
+
+    assert_public_export_has_no_customer_identifiers(exports)
+    logger.info("Privacy check passed: no customer identifier in any exported file")
+
+    return PublicExportCliResult(exports=exports, privacy_check_passed=True)
 
 
 def _print_ingestion_summary(result: PipelineResult) -> None:
@@ -350,6 +392,15 @@ def _print_powerbi_export_summary(result: PowerBIExportCliResult) -> None:
     print()
 
 
+def _print_public_export_summary(result: PublicExportCliResult) -> None:
+    print()
+    print("=== Public dataset export summary ===")
+    for export in result.exports:
+        print(f"  {export.name:<32} {export.row_count:>8,} rows  -> {export.path}")
+    print(f"Privacy check (no customer identifiers) passed: {result.privacy_check_passed}")
+    print()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="ingest-data",
@@ -359,7 +410,7 @@ def main(argv: list[str] | None = None) -> int:
         "command",
         nargs="?",
         default="ingest",
-        choices=["ingest", "clean", "load-warehouse", "export-powerbi"],
+        choices=["ingest", "clean", "load-warehouse", "export-powerbi", "export-public"],
         help="Workflow to run (default: ingest).",
     )
     parser.add_argument(
@@ -377,6 +428,7 @@ def main(argv: list[str] | None = None) -> int:
         "clean": "cleaning.log",
         "load-warehouse": "warehouse_load.log",
         "export-powerbi": "powerbi_export.log",
+        "export-public": "public_export.log",
     }
     log_file = load_pipeline_config().reports_dir / log_file_names[command]
     configure_logging(log_file=log_file)
@@ -398,6 +450,8 @@ def main(argv: list[str] | None = None) -> int:
             if not result.all_verified:
                 logger.error("Power BI export completed but a row-count mismatch was found.")
                 return 1
+        elif command == "export-public":
+            _print_public_export_summary(run_public_export_pipeline())
         else:
             parser.error(f"Unknown command: {command}")
     except IngestionError as exc:
@@ -414,6 +468,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except PowerBIExportError as exc:
         logger.error("Power BI export failed: %s", exc)
+        return 1
+    except PublicExportError as exc:
+        logger.error("Public dataset export failed: %s", exc)
         return 1
 
     return 0

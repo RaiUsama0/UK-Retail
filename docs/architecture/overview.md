@@ -321,6 +321,52 @@ feed. A refresh (whether from the CSVs or a live PostgreSQL connection) re-reads
 same historical data — it never fetches new transactions. State this explicitly on
 the dashboard itself.
 
+## Streamlit public dashboard (Phase 7 — implemented and verified locally)
+
+Full detail: `dashboards/streamlit/README.md`, `dashboards/streamlit/data/public/README.md`.
+
+Where Power BI has a specification, Streamlit has a working application — the two
+dashboards intentionally cover the same 4 analytical pages with different tooling and
+different data-privacy postures:
+
+- **Data layer**: 15 CSV extracts (`src/ecommerce_analytics/public_export.py`,
+  `ingest-data export-public`), every one aggregated to product/country/month/cohort/
+  segment grain or a headline scalar — **no file contains a `customer_id` or
+  `customer_key` column, or any per-transaction row**, enforced by an automated check
+  (`assert_no_customer_identifiers`) run as part of the export, not just reviewed by
+  eye. This is a deliberately different, stricter privacy posture than the internal
+  Power BI export (which does include `fact_sales` at transaction grain and the raw
+  per-customer `v_customer_rfm`), because this data is public.
+- **Application layer**: `dashboards/streamlit/streamlit_lib/` separates data loading,
+  schema validation, metric calculation, filtering, charting, and UI rendering into
+  distinct modules — `metrics.py` and `charts.py` have no Streamlit import at all, so
+  they're unit-tested directly with plain pytest.
+- **Filtering, done honestly**: because the public dataset is pre-aggregated, not
+  every filter can recompute every metric. `monthly_revenue.csv` has month-level
+  grain, so a date filter genuinely recalculates Page 1's headline KPIs by summing
+  the selected months; `country_performance.csv` has no date dimension, so the
+  country selector only affects its own chart, with an explicit caption saying so —
+  never a filter that looks like it's narrowing a number it can't actually narrow.
+- **Verified, not assumed**: `streamlit run dashboards/streamlit/app.py` was started
+  for real, served `HTTP 200` and a healthy `/_stcore/health`, then stopped (with a
+  documented note that Streamlit's default `0.0.0.0` binding printed a real "External
+  URL" during that test, and how to avoid it for local dev:
+  `--server.address localhost`). Every page's real, non-synthetic data was confirmed
+  via Streamlit's `AppTest` facility to render with zero exceptions and exactly the
+  reconciled figures (net revenue £9,758,809.99, repeat rate 65.58%, etc.) — the same
+  headless testing approach also runs 13 tests against hand-built synthetic fixtures
+  in CI (no Postgres or network needed for the app's own test suite).
+- **A real finding from testing, not a hypothetical**: `st.cache_data` caches by
+  function arguments only, not by file content/mtime — confirmed by a test that
+  initially failed because a later test received an earlier test's cached (wrong)
+  data despite pointing at a different directory. Fixed with an explicit
+  cache-clearing fixture in tests, and documented as a genuine operational
+  consideration for the deployed app (a data refresh needs a process restart or a
+  manual cache clear).
+- **Not deployed**: Streamlit Community Cloud deployment needs a pushed GitHub repo
+  and an authorised Cloud account — both outside what could be done here. Full,
+  exact steps are documented and ready.
+
 ## Deliverables and acceptance criteria
 
 Tracked per-phase in each phase's own summary; the overall project is complete when:

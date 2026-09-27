@@ -38,6 +38,11 @@ dashboards/powerbi/*.pbix.bak
 dashboards/powerbi/data/*
 !dashboards/powerbi/data/.gitkeep
 
+# --- Streamlit public dataset (generated, regenerable via `ingest-data export-public`) ---
+dashboards/streamlit/data/public/*.csv
+dashboards/streamlit/data/public/_export_generated_at.txt
+!dashboards/streamlit/data/public/README.md
+
 # --- OS / IDE ---
 .DS_Store
 Thumbs.db

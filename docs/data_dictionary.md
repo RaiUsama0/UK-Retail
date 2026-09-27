@@ -7,9 +7,14 @@
 online gift retailer, covering **2010-12-01 to 2011-12-09**. It is not a live feed —
 all documentation and dashboards must describe it as historical.
 
-**Licence / usage:** UCI ML Repository datasets are made available for research and
-educational use; this project uses it strictly for a non-commercial portfolio
-demonstration and credits the source as above.
+**Licence / usage:** verified directly against the UCI dataset page (2026-09; not
+assumed) — **Creative Commons Attribution 4.0 International (CC BY 4.0)**. This
+permits sharing, adaptation, commercial use, and public use, provided attribution is
+given to the creator (Daqing Chen) and the UCI Machine Learning Repository. Attribution
+is given here and in every public-facing document derived from this project. No
+redistribution restriction applies, but the raw source file itself is still not
+committed to this repository (see `.gitignore`) — this is a repo-hygiene decision
+(large binary files don't belong in git history), not a licence requirement.
 
 **Provenance and reproducibility:** all data quality figures below are computed by
 running `ingest-data` / `ingest-data clean` (see the README) against the actual

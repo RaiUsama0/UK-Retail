@@ -42,20 +42,25 @@ SQL already does well. A genuine performance issue (one view taking 3.4 seconds)
 found with `EXPLAIN ANALYZE` and fixed by rewriting the query, not by adding an index
 that wasn't needed.
 
-**Dashboard**: a Power BI data model and full page-by-page specification, built on a
-deliberately minimal 9-table import (not all 19 available views) to keep the model
-clean and avoid double-counting when combining transaction-level facts with
-pre-aggregated views.
+**Dashboards**: two, deliberately different. Power BI has a full data model and
+page-by-page specification, built on a minimal 9-table import (not all 19 available
+views) to keep the model clean and avoid double-counting — but no PBIX file exists,
+since Power BI Desktop turned out to be GUI-only with nothing I could script or
+verify. A public **Streamlit app** exists instead and is fully working: 4 pages,
+reading only a privacy-reviewed set of aggregated CSVs (no PostgreSQL connection at
+runtime, no per-customer data anywhere), tested with Streamlit's own headless
+`AppTest` facility against both synthetic fixtures and the real exported data.
 
-## What the dashboard would show (once built)
+## The four dashboard pages
 
-Four pages: an executive overview (net revenue, orders, monthly trend, top
-products/countries); product performance (with two known distortions — a shipping
-charge that tops the revenue ranking, and a single bulk order that tops the quantity
-ranking — surfaced rather than hidden); customer intelligence (RFM segmentation,
-cohort retention, revenue concentration); and a dedicated transaction-quality page,
-because "how much can I trust this number" deserves to be a first-class part of the
-dashboard, not a footnote.
+An executive overview (net revenue, orders, monthly trend, top products/countries);
+product performance (with two known distortions — a shipping charge that tops the
+revenue ranking, and a single bulk order that tops the quantity ranking — surfaced
+rather than hidden); customer intelligence (RFM segmentation, cohort retention,
+revenue concentration, built entirely from pre-aggregated segment/decile summaries so
+no individual customer's history is ever exposed publicly); and a dedicated
+transaction-quality page, because "how much can I trust this number" deserves to be a
+first-class part of the dashboard, not a footnote.
 
 ## Key findings
 
@@ -91,4 +96,8 @@ querying the data before designing anything — discovering that 647 product cod
 more than one description, that 8 customers appear under more than one country, that
 a "top product" was really a shipping line — rather than assuming a textbook schema
 would fit. And that when I found a real performance problem, the fix was a better
-query, not a reflexive new index.
+query, not a reflexive new index. The same instinct applied to the public dashboard:
+deciding what to *exclude* (per-customer rows, a raw transaction table) mattered as
+much as what to include, and testing the app for real surfaced a genuine caching
+behaviour (`st.cache_data` doesn't invalidate on a file change) I wouldn't have caught
+by just reading the framework's docs.
