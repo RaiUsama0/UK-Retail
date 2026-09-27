@@ -28,19 +28,24 @@ profiling.py      -> reports/data_profile.{json,md} — every statistic computed
                      the actual data, no rows removed or modified
         │
         ▼
-validation.py     -> schema validation (Pandera; fatal on structural failure) +
-                     business-rule warnings (non-fatal: negative qty, cancellations,
-                     missing CustomerID, etc. — real business events, not defects)
+validation.py     -> raw-data schema validation (Pandera; fatal on structural failure)
+                     + business-rule warnings (non-fatal: negative qty, cancellations,
+                     missing CustomerID, etc. — real business events, not defects) +
+                     post-cleaning invariant checks (fatal regression guards: row
+                     count preserved, every row classified, line_revenue consistent)
         │
         ▼
-cleaning.py       -> (Phase 3) classifies every row as sale / cancellation / return /
-                     questionable, acting on the warnings raised above
+cleaning.py       -> classifies every row's transaction_status (valid_sale /
+                     cancellation / potential_return / non_standard) with a documented
+                     precedence, adds non-exclusive business-rule flags, computes
+                     decimal-safe line_revenue — never adds/removes/reorders rows
         │
         ▼
-data/processed/   -> validated, typed dataset + cleaning report (before/after counts)
+data/processed/   -> online_retail_cleaned.parquet (typed, classified, analysis-ready)
+                     + reports/cleaning_summary.{json,md} (real counts, reconciled)
         │
         ▼
-database.py       -> loads a star schema into PostgreSQL:
+database.py       -> (Phase 4) loads a star schema into PostgreSQL:
                        fact_sales, dim_product, dim_customer, dim_date, dim_country
         │
         ▼
@@ -51,6 +56,28 @@ sql/analysis/*.sql -> KPI queries (aggregations, CTEs, window functions),
         └──► Streamlit demo (dashboards/streamlit/)
 ```
 
+## Cleaning strategy (Phase 3 — implemented)
+
+Full detail and verified figures: `docs/kpi_definitions.md` (classification precedence,
+revenue formulas) and `docs/data_dictionary.md` (cleaned schema, real counts). In brief:
+
+- **Nothing is deleted.** Every raw row maps to exactly one cleaned row. Ambiguous
+  records (negative quantity, non-positive price, duplicates, anomalous formats) are
+  *classified and flagged*, not dropped or silently reinterpreted.
+- **`transaction_status`** is a single, precedence-ordered classification
+  (`cancellation` > `potential_return` > `non_standard` > `valid_sale`); a wide set of
+  independent boolean flags captures everything else (missing identifiers,
+  duplicate-candidate, non-standard stock code, etc.) without collapsing information
+  into one broad category.
+- **`source_row_id`** (0-based raw file position) is a *technical* identifier, not a
+  business transaction ID — the raw data has none at the line-item grain. Phase 4 will
+  extend this into the `fact_sales` surrogate key.
+- **Revenue** is computed via Python `Decimal`, not raw float64, specifically to avoid
+  summation drift when aggregating 540k+ rows for the cleaning report's reconciliation
+  totals.
+- Passing these checks confirms internal consistency, not that every field was
+  correctly recorded at the source — see the limitations note in `data_dictionary.md`.
+
 ## Database design
 
 A star schema, chosen over a single flat table so that:
@@ -59,19 +86,22 @@ A star schema, chosen over a single flat table so that:
 - SQL analysis (Phase 5) can demonstrate realistic join patterns (fact-to-dimension),
   which is what the target junior roles actually do day to day.
 
-Grain of `fact_sales`: one row per original invoice line. Since the raw data has no
-native line-level identifier, a deterministic surrogate key is generated (documented in
-`sql/schema/` once implemented in Phase 4) so the load is idempotent and repeatable.
+Grain of `fact_sales`: one row per original invoice line, keyed by the `source_row_id`
+already established in Phase 3 (documented in `sql/schema/` once implemented in Phase 4)
+so the load is idempotent and repeatable.
 
 Monetary columns use `NUMERIC(12,2)`, never floating point, to avoid rounding errors in
 aggregated revenue figures.
 
 ## Testing strategy
 
-- Unit tests for ingestion, cleaning, validation, and KPI calculations, using small
-  synthetic fixtures with known, hand-computed expected outputs (Phase 8).
+- Unit tests for ingestion, cleaning, validation, and profiling, using small synthetic
+  fixtures with known, hand-computed expected outputs (implemented Phases 2-3; 36
+  tests as of Phase 3 — `pytest`). Further KPI/database/dashboard tests land in
+  Phase 8 as those modules are built.
 - Data quality tests: required fields, types, valid quantity/price rules, date parsing,
-  and reconciliation between raw and cleaned row counts.
+  transaction classification, decimal-safe revenue, and reconciliation between raw and
+  cleaned row counts — enforced as fatal regression guards in `validation.py`.
 - CI (`.github/workflows/ci.yml`) runs lint (`ruff`) and `pytest` on every push/PR
   without requiring any private credentials.
 

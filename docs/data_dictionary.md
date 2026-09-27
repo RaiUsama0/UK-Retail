@@ -12,29 +12,45 @@ educational use; this project uses it strictly for a non-commercial portfolio
 demonstration and credits the source as above.
 
 **Provenance and reproducibility:** all data quality figures below are computed by
-running `ingest-data` (see the README) against the actual dataset — never hand-typed.
-The full, up-to-date profiling output is regenerated at `reports/data_profile.md` /
-`reports/data_profile.json` on every run.
+running `ingest-data` / `ingest-data clean` (see the README) against the actual
+dataset — never hand-typed. The full, up-to-date output is regenerated at
+`reports/data_profile.{json,md}` and `reports/cleaning_summary.{json,md}` on every run.
 
 ## Raw columns (as published)
 
 | Column | Raw dtype (pandas) | Description | Verified data quality notes |
 |---|---|---|---|
-| `InvoiceNo` | object | Invoice number. A 6-digit integer, uniquely assigned per transaction; **prefixed `C` if the transaction is a cancellation**. | 25,900 unique values; 9,288 rows start with `C`. |
-| `StockCode` | object | Product/item code. A 5-digit integer, uniquely assigned per product; some non-product codes exist (e.g. `POST`, `D`, `M`, `BANK CHARGES`). | 4,070 unique values. |
-| `Description` | object | Product name. | 1,454 rows (0.3%) missing — these rows are also `UnitPrice = 0` and missing `CustomerID`, consistent with manual adjustment entries rather than real sales. |
-| `Quantity` | int64 | Quantity of each product per transaction. | Range -80,995 to 80,995. 10,624 rows negative. Of these, 9,288 correspond to a cancelled invoice (`InvoiceNo` starting with `C`); the remaining 1,336 are negative-quantity rows **not** flagged as a cancellation ("potential returns" — flagged for review, not assumed invalid). |
-| `InvoiceDate` | datetime64 | Date and time the transaction was generated. | Range 2010-12-01 08:26 to 2011-12-09 12:50. No missing values. |
-| `UnitPrice` | float64 | Unit price in pounds sterling (GBP). | Range -£11,062.06 to £38,970. 2,517 rows are ≤ 0 (2 negative, 2,515 exactly zero) — these are not genuine product sales (adjustments/write-offs), and are excluded from revenue KPIs (documented in `kpi_definitions.md`). |
-| `CustomerID` | float64 (loaded; NA-forcing) | A 5-digit integer, uniquely assigned per customer. | **135,080 rows (24.9%) missing.** Not all missing values represent invalid transactions — many are legitimate sales without a registered customer account. Product-level KPIs include these rows; customer-level KPIs (repeat rate, RFM) exclude them, with the exclusion documented and its effect quantified in the cleaning report. |
-| `Country` | object | Name of the country where the customer resides. | 38 distinct values. 91% of rows are `United Kingdom`. No reliable UK sub-national/regional geography is present in the source data — regional breakdowns are out of scope unless a future enrichment step adds one. |
+| `InvoiceNo` | object | Invoice number. A 6-digit integer, uniquely assigned per transaction; **prefixed `C` if the transaction is a cancellation**. | 25,900 unique values; 9,288 rows start with `C`. **3 rows** don't match the normal `^C?\d{6}$` pattern at all (`InvoiceNo` like `A563185`) — a set of "Adjust bad debt" manual accounting entries, `StockCode = 'B'`, one with a *positive* price (£11,062.06) and positive quantity that would otherwise look like an ordinary sale. |
+| `StockCode` | object | Product/item code. A 5-digit integer, uniquely assigned per product; some non-product codes exist (e.g. `POST`, `D`, `M`, `BANK CHARGES`). | 4,070 unique values. **2,995 rows (0.55%)** have a code that doesn't start with a digit (`POST` 1,256, `DOT` 710, `M` 571, `C2` 144, `D` 77, `S` 63, `BANK CHARGES` 37, `AMAZONFEE` 34, `CRUK` 16, `DCGS*` gift-set codes, `gift_0001_*`, `PADS`, `B`) — flagged informationally, not treated as invalid, since several (e.g. `POST`) are genuine, correctly-priced charges. |
+| `Description` | object | Product name. | 1,454 rows (0.3%) missing. 113,452 rows have leading/trailing whitespace (normalised during cleaning). No rows are blank-after-strip. |
+| `Quantity` | int64 | Quantity of each product per transaction. | Range -80,995 to 80,995. 10,624 rows negative. Of these, 9,288 correspond to a cancelled invoice (`InvoiceNo` starting with `C`); the remaining 1,336 are negative-quantity rows **not** flagged as a cancellation ("potential returns"). 0 rows have `Quantity == 0`. |
+| `InvoiceDate` | datetime64 | Date and time the transaction was generated. | Range 2010-12-01 08:26 to 2011-12-09 12:50. No missing/invalid values. |
+| `UnitPrice` | float64 | Unit price in pounds sterling (GBP). | Range -£11,062.06 to £38,970. 2,517 rows are ≤ 0 (2 negative, 2,515 exactly zero). **All 1,336 potential-return rows have `UnitPrice == 0` exactly** — verified, not assumed. |
+| `CustomerID` | float64 (loaded; NA-forcing) | A 5-digit integer, uniquely assigned per customer. | **135,080 rows (24.93%) missing.** Not all missing values represent invalid transactions — many are legitimate sales without a registered customer account. **All 1,336 potential-return rows are also missing `CustomerID`.** Product-level KPIs include these rows; customer-level KPIs (repeat rate, RFM) exclude them. |
+| `Country` | object | Name of the country where the customer resides. | 38 distinct values. 91% of rows are `United Kingdom`. No reliable UK sub-national/regional geography is present in the source data. |
 
-## Derived / pipeline columns (added during cleaning — Phase 3)
+## Cleaned dataset schema (`data/processed/online_retail_cleaned.parquet`, Phase 3)
+
+Every raw row maps to exactly one cleaned row (row count is never changed by
+cleaning); columns are renamed to snake_case. Real, verified counts against the full
+dataset are in `reports/cleaning_summary.md`.
 
 | Column | Type | Description |
 |---|---|---|
-| `transaction_type` | categorical | One of `sale`, `cancellation`, `return`, `questionable` — classification logic documented in `docs/kpi_definitions.md` and the cleaning report. |
-| `line_id` | surrogate key | Deterministic technical identifier for each invoice line, since the raw data has no native line-level primary key (see `docs/architecture/` for the exact derivation). |
+| `source_row_id` | int64 | **Technical** identifier = the row's 0-based position in the raw file at load time. **Not a business transaction ID** — the raw data has none at the line-item grain. Stable only as long as the raw file's row order is unchanged (guaranteed by the ingestion checksum). |
+| `invoice_no`, `stock_code`, `description`, `country` | string | Raw values, whitespace-stripped. `description` uses pandas' nullable `string` dtype so a blank/whitespace-only value becomes a proper missing value, not an empty string. |
+| `quantity`, `unit_price` | int64, float64 | Unchanged from raw. |
+| `invoice_date` | datetime64 | Re-parsed with `errors="coerce"` so a genuinely invalid date becomes a detectable `NaT` (0 found in the real dataset). |
+| `customer_id` | nullable Int64 | Raw `CustomerID`, cast from float64 to a proper nullable integer type. |
+| `transaction_status` | category | One of `valid_sale`, `cancellation`, `potential_return`, `non_standard` — see `docs/kpi_definitions.md` for the exact precedence rule. |
+| `line_revenue` | float64 | `quantity * unit_price`, computed via `Decimal` and quantized to whole pence (`ROUND_HALF_UP`) — avoids float64 rounding artefacts on individual lines; report-level totals are summed in `Decimal` directly to avoid accumulation drift over 540k+ rows. |
+| `flag_missing_customer_id` | bool | `customer_id` is null. |
+| `flag_missing_description` | bool | `description` is null. |
+| `flag_non_positive_price` | bool | `unit_price <= 0`. |
+| `flag_zero_quantity` | bool | `quantity == 0`. |
+| `flag_duplicate_candidate` | bool | Row is an exact duplicate of another row (all original columns identical, excluding `source_row_id`). Preserved, never auto-dropped — see the duplicate policy in `docs/kpi_definitions.md`. |
+| `flag_non_standard_invoice_format` | bool | `invoice_no` doesn't match `^C?\d{6}$`. |
+| `flag_non_standard_stock_code` | bool | `stock_code` doesn't start with a digit — informational only, does not affect `transaction_status`. |
 
 ## Known dataset limitations
 
@@ -43,3 +59,10 @@ The full, up-to-date profiling output is regenerated at `reports/data_profile.md
 - No customer demographic data beyond country.
 - No reliable UK regional/postcode geography.
 - A single export snapshot, not a live/streaming source.
+- **Passing structural and cleaning validation is not the same as the data being fully
+  accurate.** Validation confirms internal consistency (row counts preserved, every
+  row classified, `line_revenue` arithmetic correct) — it cannot confirm that, say, a
+  `valid_sale` row's `Quantity`/`UnitPrice` were recorded correctly at the source. The
+  `non_standard`, `potential_return`, and duplicate-candidate flags exist precisely
+  because a meaningful share of rows (about 2.4% combined) don't inspire that
+  confidence, and are reported separately rather than folded into "clean" data.
