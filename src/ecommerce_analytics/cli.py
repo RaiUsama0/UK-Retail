@@ -1,10 +1,12 @@
-"""CLI entry point: ingestion+profiling and cleaning+classification workflows.
+"""CLI entry point: ingestion+profiling, cleaning+classification, and warehouse-loading
+workflows.
 
 Usage (from the repository root, with the package installed):
 
     ingest-data                  # ingest + profile (default)
     ingest-data ingest --force   # same, overwriting a drifted raw copy
     ingest-data clean            # clean, classify, validate, and save processed output
+    ingest-data load-warehouse   # load the cleaned dataset into PostgreSQL
     python -m ecommerce_analytics.cli clean
 """
 
@@ -15,6 +17,8 @@ import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+import pandas as pd
 
 from ecommerce_analytics.cleaning import (
     CleaningError,
@@ -33,6 +37,15 @@ from ecommerce_analytics.validation import (
     derive_warnings,
     validate_cleaned_dataset,
     validate_schema,
+)
+from ecommerce_analytics.warehouse import (
+    ReconciliationResult,
+    WarehouseError,
+    build_engine,
+    initialise_schema,
+    load_warehouse,
+    reconcile,
+    save_load_report,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,6 +74,15 @@ class CleaningResult:
     json_report_path: Path
     markdown_report_path: Path
     warnings: list
+
+
+@dataclass(frozen=True)
+class WarehouseLoadCliResult:
+    staging_rows_loaded: int
+    fact_rows_after_load: int
+    reconciliation: ReconciliationResult
+    json_report_path: Path
+    markdown_report_path: Path
 
 
 def configure_logging(log_file: Path | None = None, level: int = logging.INFO) -> None:
@@ -172,6 +194,62 @@ def run_cleaning_pipeline(force: bool = False) -> CleaningResult:
     )
 
 
+def run_warehouse_load_pipeline() -> WarehouseLoadCliResult:
+    """Load the Phase 3 processed Parquet dataset into PostgreSQL.
+
+    Reads the already-validated cleaned dataset (does not re-run ingestion/cleaning),
+    connects to PostgreSQL, idempotently applies the schema, loads staging ->
+    dimensions -> fact_sales in a single transaction, then reconciles the warehouse
+    against the source dataframe.
+
+    Raises :class:`~ecommerce_analytics.warehouse.WarehouseError` on connection
+    failure, missing processed dataset, or a load that had to be rolled back.
+    """
+    cfg = load_pipeline_config()
+    processed_path = cfg.processed_data_dir / "online_retail_cleaned.parquet"
+
+    if not processed_path.exists():
+        raise WarehouseError(
+            f"Processed dataset not found at {processed_path}. Run `ingest-data clean` first."
+        )
+
+    logger.info("Reading processed dataset from %s", processed_path)
+    cleaned_df = pd.read_parquet(processed_path)
+
+    logger.info("Connecting to PostgreSQL")
+    engine = build_engine()
+
+    logger.info("Initialising/verifying warehouse schema")
+    initialise_schema(engine)
+
+    logger.info("Loading %d rows into the warehouse", len(cleaned_df))
+    load_result = load_warehouse(cleaned_df, engine)
+
+    logger.info("Reconciling warehouse against source dataset")
+    reconciliation = reconcile(cleaned_df, engine)
+    for check in reconciliation.checks:
+        if not check.passed:
+            logger.warning(
+                "RECONCILIATION MISMATCH [%s]: expected=%s actual=%s",
+                check.name,
+                check.expected,
+                check.actual,
+            )
+
+    json_path = cfg.reports_dir / "warehouse_load_report.json"
+    markdown_path = cfg.reports_dir / "warehouse_load_report.md"
+    save_load_report(load_result, reconciliation, json_path, markdown_path)
+    logger.info("Warehouse load reports written to %s and %s", json_path, markdown_path)
+
+    return WarehouseLoadCliResult(
+        staging_rows_loaded=load_result.staging_rows_loaded,
+        fact_rows_after_load=load_result.fact_rows_after_load,
+        reconciliation=reconciliation,
+        json_report_path=json_path,
+        markdown_report_path=markdown_path,
+    )
+
+
 def _print_ingestion_summary(result: PipelineResult) -> None:
     warning_count = sum(1 for w in result.warnings if w.severity == "warning")
     info_count = sum(1 for w in result.warnings if w.severity == "info")
@@ -207,6 +285,21 @@ def _print_cleaning_summary(result: CleaningResult) -> None:
     print()
 
 
+def _print_warehouse_load_summary(result: WarehouseLoadCliResult) -> None:
+    print()
+    print("=== Warehouse load summary ===")
+    print(f"Staging rows loaded:     {result.staging_rows_loaded:,}")
+    print(f"fact_sales row count:    {result.fact_rows_after_load:,}")
+    print("Reconciliation checks:")
+    for check in result.reconciliation.checks:
+        status = "PASS" if check.passed else "FAIL"
+        print(f"  [{status}] {check.name}: expected={check.expected} actual={check.actual}")
+    print(f"All checks passed:       {result.reconciliation.all_passed}")
+    print(f"JSON report:             {result.json_report_path}")
+    print(f"Markdown report:         {result.markdown_report_path}")
+    print()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="ingest-data",
@@ -216,7 +309,7 @@ def main(argv: list[str] | None = None) -> int:
         "command",
         nargs="?",
         default="ingest",
-        choices=["ingest", "clean"],
+        choices=["ingest", "clean", "load-warehouse"],
         help="Workflow to run (default: ingest).",
     )
     parser.add_argument(
@@ -229,8 +322,12 @@ def main(argv: list[str] | None = None) -> int:
     command = args.command
     force = args.force
 
-    log_file_name = "ingestion.log" if command == "ingest" else "cleaning.log"
-    log_file = load_pipeline_config().reports_dir / log_file_name
+    log_file_names = {
+        "ingest": "ingestion.log",
+        "clean": "cleaning.log",
+        "load-warehouse": "warehouse_load.log",
+    }
+    log_file = load_pipeline_config().reports_dir / log_file_names[command]
     configure_logging(log_file=log_file)
 
     try:
@@ -238,6 +335,12 @@ def main(argv: list[str] | None = None) -> int:
             _print_ingestion_summary(run_ingestion_pipeline(force=force))
         elif command == "clean":
             _print_cleaning_summary(run_cleaning_pipeline(force=force))
+        elif command == "load-warehouse":
+            result = run_warehouse_load_pipeline()
+            _print_warehouse_load_summary(result)
+            if not result.reconciliation.all_passed:
+                logger.error("Warehouse load completed but reconciliation found mismatches.")
+                return 1
         else:
             parser.error(f"Unknown command: {command}")
     except IngestionError as exc:
@@ -248,6 +351,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except (CleaningError, CleaningValidationError) as exc:
         logger.error("Cleaning failed: %s", exc)
+        return 1
+    except WarehouseError as exc:
+        logger.error("Warehouse load failed: %s", exc)
         return 1
 
     return 0

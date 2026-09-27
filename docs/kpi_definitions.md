@@ -5,9 +5,11 @@ are treated, so results are reproducible and defensible in an interview.
 
 > **Status:** the transaction classification and revenue figures below are **implemented**
 > (Phase 3, `src/ecommerce_analytics/cleaning.py`) and verified against the real dataset —
-> see `reports/cleaning_summary.md` for the live output. Order/customer/product KPIs
-> further down are still planning specifications, finalised in Phase 5 alongside the SQL
-> that implements them.
+> see `reports/cleaning_summary.md` for the live output. A first SQL-native
+> implementation of the order/customer/product/monthly-revenue KPIs below now exists as
+> PostgreSQL views (Phase 4, `sql/schema/006_views.sql` —
+> `v_customer_summary`, `v_product_summary`, `v_monthly_revenue`); the full ad-hoc SQL
+> analysis (window functions, CTEs, growth calculations) is still Phase 5's job.
 
 ## Transaction classification (feeds every KPI below)
 

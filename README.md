@@ -5,7 +5,7 @@ schema, SQL business analysis, and dashboards — built on the UCI **Online Reta
 dataset, a historical (non-live) export of transactions from a UK-based online gift
 retailer covering 2010-12-01 to 2011-12-09.
 
-> **Status:** Phase 3 (data cleaning, transaction classification & validation) complete. See
+> **Status:** Phase 4 (PostgreSQL data modelling & warehouse loading) complete. See
 > [docs/architecture/overview.md](docs/architecture/overview.md) for the full plan and
 > current phase-by-phase progress.
 
@@ -158,9 +158,64 @@ Notable, verified findings (not assumed):
 - **Net revenue: £9,758,809.99** (gross sales £10,655,622.48 + cancellation value
   -£896,812.49).
 
-### Database loading and beyond
+### PostgreSQL warehouse loading (Phase 4)
 
-> Not yet available — Phase 4 onward.
+```bash
+docker compose up -d       # start PostgreSQL 16 (requires Docker Desktop running)
+ingest-data load-warehouse # or: python -m ecommerce_analytics.cli load-warehouse
+```
+
+What this does (reads the already-cleaned Parquet file — does not re-run
+ingestion/cleaning; connects to PostgreSQL on the port configured in `.env`, default
+`5433`):
+
+1. Idempotently applies the schema (`sql/schema/*.sql` — safe to re-run every time,
+   never drops or alters existing objects).
+2. Bulk-loads the cleaned dataset into a `staging` landing table via `COPY`.
+3. Upserts dimension tables (`dim_product`, `dim_customer`, `dim_country`, `dim_date`)
+   and then `fact_sales`, all inside **one transaction** — a failure anywhere rolls
+   back everything.
+4. Reconciles the warehouse against the source dataframe (row counts, transaction
+   classification counts, missing-customer count, duplicate-candidate count, gross/
+   cancellation/return/net revenue, monetary precision) and writes
+   `reports/warehouse_load_report.{json,md}`.
+
+Full schema design, ER diagram, and the idempotency/rollback strategy:
+[docs/architecture/overview.md](docs/architecture/overview.md). Column-level detail:
+[docs/data_dictionary.md](docs/data_dictionary.md).
+
+**Real load results** (reproducible via the command above):
+
+| Check | Result |
+|---|---|
+| `fact_sales` row count | **541,909** (matches the cleaned dataset exactly) |
+| Transaction status counts | `valid_sale` 530,103 / `cancellation` 9,288 / `potential_return` 1,336 / `non_standard` 1,182 |
+| Missing-customer rows (nullable FK, not invented) | 135,080 |
+| Duplicate-candidate rows preserved | 10,147 |
+| Gross sales revenue | £10,655,622.48 |
+| Cancellation value | -£896,812.49 |
+| **Net revenue** | **£9,758,809.99** |
+| **All reconciliation checks** | **PASS** (12/12) |
+
+**Idempotency verified**: the loader was run twice against the real dataset;
+`fact_sales` had exactly 541,909 rows after both runs, with no duplicate-key errors.
+**Rollback verified**: a deliberately broken load (null `transaction_status`) was
+rejected and the transaction rolled back with `fact_sales` left unchanged.
+
+**Example SQL queries** (against the analytical views in `sql/schema/006_views.sql`):
+
+```sql
+-- Monthly net revenue
+SELECT year, month, net_revenue, order_count FROM warehouse.v_monthly_revenue;
+
+-- Top 10 customers by revenue
+SELECT customer_id, order_count, total_net_revenue
+FROM warehouse.v_customer_summary
+ORDER BY total_net_revenue DESC LIMIT 10;
+
+-- Data-quality monitoring, live from the warehouse
+SELECT * FROM warehouse.v_data_quality_monitor;
+```
 
 ## Running the tests
 
@@ -168,6 +223,11 @@ Notable, verified findings (not assumed):
 pytest        # or: make test
 ruff check src tests   # or: make lint
 ```
+
+Database integration tests (`tests/test_warehouse_integration.py`) run against a
+dedicated `<database>_test` database (auto-created, never the real dev database) and
+are **skipped automatically** if PostgreSQL isn't reachable — `pytest` still passes
+either way. CI runs them for real, against a PostgreSQL 16 service container.
 
 ## Project limitations
 

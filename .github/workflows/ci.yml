@@ -8,6 +8,29 @@ on:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: ecommerce_analytics
+          POSTGRES_USER: analytics_user
+          POSTGRES_PASSWORD: ci_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U analytics_user -d ecommerce_analytics"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ecommerce_analytics
+      POSTGRES_USER: analytics_user
+      POSTGRES_PASSWORD: ci_test_password
+
     steps:
       - uses: actions/checkout@v4
 

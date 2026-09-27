@@ -52,6 +52,36 @@ dataset are in `reports/cleaning_summary.md`.
 | `flag_non_standard_invoice_format` | bool | `invoice_no` doesn't match `^C?\d{6}$`. |
 | `flag_non_standard_stock_code` | bool | `stock_code` doesn't start with a digit — informational only, does not affect `transaction_status`. |
 
+## PostgreSQL warehouse schema (Phase 4)
+
+Full ER diagram and design rationale: `docs/architecture/overview.md`. Loaded via
+`ingest-data load-warehouse`; verified against the real 541,909-row dataset.
+
+| Table | Grain | Key(s) |
+|---|---|---|
+| `warehouse.fact_sales` | One row per cleaned-dataset row (= one row per raw invoice line) | PK `source_row_id` (reused directly from Phase 3 — no second surrogate key) |
+| `warehouse.dim_product` | One row per distinct `stock_code` (4,070 rows) | PK `product_key`; business key `stock_code` (UNIQUE) |
+| `warehouse.dim_customer` | One row per distinct known `customer_id` (4,372 rows — no synthetic "unknown customer" row) | PK `customer_key`; business key `customer_id` (UNIQUE) |
+| `warehouse.dim_country` | One row per distinct country (38 rows) | PK `country_key`; business key `country_name` (UNIQUE) |
+| `warehouse.dim_date` | One row per calendar day spanning the observed date range (374 rows) | PK `date_key` (INTEGER, `YYYYMMDD`) |
+| `staging.stg_cleaned_sales` | Transient landing table, truncated and bulk-loaded (`COPY`) every run | No constraints — not the source of truth |
+
+Verified, not assumed, going into this design:
+- **647 of 4,070 stock codes have more than one distinct non-null description**
+  (often a genuine description plus an inventory annotation like `"damaged"` or
+  `"check"`) — `dim_product.description` is the `MODE()` of observed descriptions,
+  with `description_variant_count` recording how many were seen.
+- **8 of 4,372 customers transacted from more than one country** — so `dim_customer`
+  deliberately has no country column; country is modelled only via `dim_country`,
+  joined directly from `fact_sales`.
+- `fact_sales.customer_key` is **nullable** — no customer identity is invented for the
+  24.93% of rows with a missing `CustomerID`.
+
+Idempotency: `INSERT ... ON CONFLICT DO UPDATE/DO NOTHING` upserts keyed on real
+primary/unique keys, inside a single transaction per load. Verified by loading the
+real dataset twice and confirming `fact_sales` still has exactly 541,909 rows both
+times, with all reconciliation checks passing — see `reports/warehouse_load_report.md`.
+
 ## Known dataset limitations
 
 - No product cost or margin data — profit cannot be calculated, only revenue.
