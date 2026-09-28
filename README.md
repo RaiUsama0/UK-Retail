@@ -5,10 +5,11 @@ schema, SQL business analysis, and dashboards — built on the UCI **Online Reta
 dataset, a historical (non-live) export of transactions from a UK-based online gift
 retailer covering 2010-12-01 to 2011-12-09.
 
-> **Status:** Phase 7 (public Streamlit dashboard) complete and verified locally —
-> **not yet publicly deployed** (requires pushing to GitHub and Streamlit Community
-> Cloud authorisation, both outside what I can do on your behalf). Power BI's `.pbix`
-> also still doesn't exist — see the notes below on both. See
+> **Status:** Phase 8 (release audit) complete — repository audited and ready to
+> publish; the public dataset is committed for deployment. **Not yet pushed to
+> GitHub or deployed** (requires your GitHub push and Streamlit Community Cloud
+> authorisation — outside what I can do on your behalf; exact steps below). Power
+> BI's `.pbix` also still doesn't exist — see the notes below on both. See
 > [docs/architecture/overview.md](docs/architecture/overview.md) for the full plan and
 > current phase-by-phase progress.
 
@@ -326,6 +327,28 @@ public/commercial use with attribution).
 **Not yet publicly deployed.** Deploying to Streamlit Community Cloud requires
 pushing this repo to GitHub and authorising a Streamlit Cloud account — both need
 you, not me. Full step-by-step instructions: `dashboards/streamlit/README.md`.
+
+## Publishing this repository to GitHub
+
+No remote is configured yet (verified with `git remote -v`). No `gh` CLI is
+installed on this machine either, so here's the plain `git` + GitHub website path:
+
+1. On [github.com](https://github.com/new), create a **new empty repository** —
+   don't initialise it with a README, licence, or .gitignore (this repo already has
+   all three; letting GitHub add its own would conflict on the first push).
+2. Copy the repository URL GitHub gives you (HTTPS, e.g.
+   `https://github.com/<you>/<repo-name>.git`, or SSH if you have a key set up).
+3. From this repo's root:
+   ```bash
+   git remote add origin <the-url-you-copied>
+   git push -u origin master
+   ```
+4. Confirm it worked by opening the repository URL in a browser — you should see all
+   8 commits (Phases 1-7 plus release prep) and the current file tree.
+
+Nothing above has been run — this repository has no remote and nothing has been
+pushed. I won't run `git push` myself without you explicitly asking for it, per your
+instructions.
 
 ## Running the tests
 
