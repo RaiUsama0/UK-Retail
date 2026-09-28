@@ -16,6 +16,9 @@ venv/
 
 # --- Jupyter ---
 .ipynb_checkpoints/
+# project1.ipynb: a personal exploratory notebook (not a pipeline deliverable) whose
+# cell outputs embed a few raw rows of the source dataset — kept locally, not published.
+project1.ipynb
 
 # --- Data (raw source + derived outputs are reproducible via the pipeline, not committed) ---
 data/raw/*
