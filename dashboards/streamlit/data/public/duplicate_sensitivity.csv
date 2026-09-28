@@ -1,0 +1,3 @@
+dataset_version,revenue,order_count,units_sold,average_order_value
+complete_dataset,10655622.48,19959,5588375,533.88
+deduplicated,10630496.89,19959,5572116,532.62

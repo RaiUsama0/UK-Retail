@@ -1,0 +1,2 @@
+total_source_records,date_range_start,date_range_end,valid_sale_count,cancellation_count,potential_return_count,non_standard_count,missing_customer_id_count,duplicate_candidate_count,anomalous_invoice_format_count
+541909,2010-12-01,2011-12-09,530103,9288,1336,1182,135080,10147,3

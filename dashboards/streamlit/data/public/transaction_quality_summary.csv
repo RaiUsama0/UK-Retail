@@ -1,0 +1,5 @@
+transaction_status,row_count,missing_customer_id_count,missing_description_count,non_positive_price_count,zero_quantity_count,duplicate_candidate_count,non_standard_invoice_format_count,non_standard_stock_code_count
+valid_sale,530103,132219,0,0,0,10068,0,2378
+cancellation,9288,383,0,0,0,69,0,584
+potential_return,1336,1336,862,1336,0,0,0,12
+non_standard,1182,1142,592,1181,0,10,3,21

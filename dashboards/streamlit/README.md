@@ -14,6 +14,12 @@ extracts (`data/public/`, see that folder's own README for the full privacy revi
 **No PostgreSQL connection is used or required at runtime** — this app can run
 entirely offline once the CSVs exist.
 
+These 15 CSVs **are committed to this repository** (unlike the internal Power BI
+export) specifically so Streamlit Community Cloud — which has no database access —
+can serve them. Regenerate with `ingest-data export-public` and commit the update
+whenever the underlying pipeline changes; see `data/public/README.md` for the
+per-file privacy rationale and the automated check that enforces it.
+
 ## Architecture
 
 ```
@@ -26,7 +32,7 @@ dashboards/streamlit/
     metrics.py                - pure KPI/filter calculation functions (no Streamlit import — unit-testable directly)
     charts.py                 - Plotly figure builders (pure functions)
     ui.py                     - shared KPI cards, warning banners, footer
-  data/public/               - the actual CSV data (gitignored; regenerate, don't commit)
+  data/public/               - the actual CSV data (committed — see below for why)
   requirements.txt            - deployment dependencies (streamlit + pandas + plotly only)
 ```
 
@@ -74,20 +80,19 @@ is not a hypothetical concern.
 
 **Not yet done — requires you to authorise it.** Steps, once you're ready:
 
-1. Push this repository to GitHub (`git remote add origin <your-repo-url>`,
-   `git push -u origin master`). No remote is configured yet.
-2. Generate the public dataset locally (`ingest-data export-public`) and commit the
-   resulting `data/public/*.csv` files **for this deployment only** — Streamlit
-   Community Cloud has no PostgreSQL access, so the CSVs must be committed to the repo
-   it deploys from, unlike local development where they're gitignored. (Alternative:
-   keep them gitignored and use Streamlit Cloud's "Secrets"/build step to fetch them
-   from elsewhere — the simple option is to commit them for the deployed branch.)
+1. Push this repository to GitHub (`git remote add origin <your-repo-url>`, then
+   `git push -u origin master`). No remote is configured yet — see the main README
+   for the exact commands and a GitHub CLI option.
+2. The public dataset (`data/public/*.csv`) is already committed (see above) — no
+   extra step needed here. Regenerate + commit again only when the pipeline changes.
 3. Go to [share.streamlit.io](https://share.streamlit.io), sign in with your GitHub
    account, and click "New app".
 4. Repository: your pushed repo. Branch: `master`. Main file path:
    `dashboards/streamlit/app.py`.
-5. Streamlit Cloud will find `dashboards/streamlit/requirements.txt` automatically
-   (co-located with the entry point).
+5. Streamlit Cloud finds `dashboards/streamlit/requirements.txt` automatically —
+   verified directly against Streamlit's own docs: it searches the entrypoint's
+   directory first, then the repo root, so a requirements.txt co-located with
+   `app.py` (as here) takes precedence.
 6. Under "Advanced settings" -> "Secrets", optionally set:
    ```toml
    GITHUB_REPO_URL = "https://github.com/<you>/<repo>"
